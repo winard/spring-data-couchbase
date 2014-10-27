@@ -119,10 +119,12 @@ public class MappingCouchbaseConverter extends AbstractCouchbaseConverter
    * @return the converted entity.
    */
   @SuppressWarnings("unchecked")
-  protected <R> R read(final TypeInformation<R> type, final CouchbaseDocument source, final Object parent) {
+  protected <R> R read(TypeInformation<R> type, final CouchbaseDocument source, final Object parent) {
     if (source == null) {
       return null;
     }
+    if (type == null)
+      type = (TypeInformation<R>)ClassTypeInformation.MAP;
 
     TypeInformation<? extends R> typeToUse = typeMapper.readType(source, type);
     Class<? extends R> rawType = typeToUse.getType();
@@ -133,6 +135,8 @@ public class MappingCouchbaseConverter extends AbstractCouchbaseConverter
 
     if (typeToUse.isMap()) {
       return (R) readMap(typeToUse, source, parent);
+    } else if (rawType.equals(Object.class)) {
+      return (R) readMap(ClassTypeInformation.MAP, source, parent);
     }
 
     CouchbasePersistentEntity<R> entity = (CouchbasePersistentEntity<R>) mappingContext.getPersistentEntity(typeToUse);
@@ -573,8 +577,9 @@ public class MappingCouchbaseConverter extends AbstractCouchbaseConverter
    * @return the instantiated collection.
    */
   @SuppressWarnings("unchecked")
-  private Object readCollection(final TypeInformation<?> targetType, final CouchbaseList source, final Object parent) {
-    Assert.notNull(targetType);
+  private Object readCollection(TypeInformation<?> targetType, final CouchbaseList source, final Object parent) {
+    if (targetType == null)
+      targetType = ClassTypeInformation.LIST;
 
     Class<?> collectionType = targetType.getType();
     if (source.isEmpty()) {
