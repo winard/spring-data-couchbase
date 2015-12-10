@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2014 the original author or authors.
+ * Copyright 2013-2015 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
 import org.springframework.core.CollectionFactory;
 import org.springframework.core.convert.ConversionService;
-import org.springframework.core.convert.support.ConversionServiceFactory;
+import org.springframework.core.convert.support.DefaultConversionService;
 import org.springframework.data.convert.EntityInstantiator;
 import org.springframework.data.couchbase.core.mapping.CouchbaseDocument;
 import org.springframework.data.couchbase.core.mapping.CouchbaseList;
@@ -28,6 +28,7 @@ import org.springframework.data.couchbase.core.mapping.CouchbasePersistentEntity
 import org.springframework.data.couchbase.core.mapping.CouchbasePersistentProperty;
 import org.springframework.data.mapping.Association;
 import org.springframework.data.mapping.AssociationHandler;
+import org.springframework.data.mapping.PersistentPropertyAccessor;
 import org.springframework.data.mapping.PreferredConstructor.Parameter;
 import org.springframework.data.mapping.PropertyHandler;
 import org.springframework.data.mapping.context.MappingContext;
@@ -80,7 +81,7 @@ public class MappingCouchbaseConverter extends AbstractCouchbaseConverter
   @SuppressWarnings("deprecation")
   public MappingCouchbaseConverter(final MappingContext<? extends CouchbasePersistentEntity<?>,
     CouchbasePersistentProperty> mappingContext) {
-    super(ConversionServiceFactory.createDefaultConversionService());
+    super(new DefaultConversionService());
 
     this.mappingContext = mappingContext;
     typeMapper = new DefaultCouchbaseTypeMapper(DefaultCouchbaseTypeMapper.DEFAULT_TYPE_KEY);
@@ -161,9 +162,8 @@ public class MappingCouchbaseConverter extends AbstractCouchbaseConverter
       getParameterProvider(entity, source, evaluator, parent);
     EntityInstantiator instantiator = instantiators.getInstantiatorFor(entity);
 
-    R instance = instantiator.createInstance(entity, provider);
-    final BeanWrapper<R> wrapper = BeanWrapper.create(instance, conversionService);
-    final R result = wrapper.getBean();
+    final R instance = instantiator.createInstance(entity, provider);
+		final PersistentPropertyAccessor accessor = getPropertyAccessor(instance);
 
     entity.doWithProperties(new PropertyHandler<CouchbasePersistentProperty>() {
       @Override
@@ -171,8 +171,8 @@ public class MappingCouchbaseConverter extends AbstractCouchbaseConverter
         if (!doesPropertyExistInSource(prop) || entity.isConstructorArgument(prop)) {
           return;
         }
-        Object obj = prop.isIdProperty() ? source.getId() : getValueInternal(prop, source, result);
-        wrapper.setProperty(prop, obj);
+        Object obj = prop.isIdProperty() ? source.getId() : getValueInternal(prop, source, instance);
+        accessor.setProperty(prop, obj);
       }
 
       private boolean doesPropertyExistInSource(final CouchbasePersistentProperty property) {
@@ -184,12 +184,12 @@ public class MappingCouchbaseConverter extends AbstractCouchbaseConverter
       @Override
       public void doWithAssociation(final Association<CouchbasePersistentProperty> association) {
         CouchbasePersistentProperty inverseProp = association.getInverse();
-        Object obj = getValueInternal(inverseProp, source, result);
-        wrapper.setProperty(inverseProp, obj);
+        Object obj = getValueInternal(inverseProp, source, instance);
+        accessor.setProperty(inverseProp, obj);
       }
     });
 
-    return result;
+    return instance;
   }
 
   /**
@@ -381,12 +381,12 @@ public class MappingCouchbaseConverter extends AbstractCouchbaseConverter
       throw new MappingException("No mapping metadata found for entity of type " + source.getClass().getName());
     }
 
-		final BeanWrapper<Object> wrapper = BeanWrapper.create(source, conversionService);
+		final ConvertingPropertyAccessor accessor = getPropertyAccessor(source);
     final CouchbasePersistentProperty idProperty = entity.getIdProperty();
     final CouchbasePersistentProperty versionProperty = entity.getVersionProperty();
 
     if (idProperty != null && target.getId() == null) {
-      String id = wrapper.getProperty(idProperty, String.class);
+      String id = accessor.getProperty(idProperty, String.class);
       target.setId(id);
     }
     target.setExpiration(entity.getExpiry());
@@ -398,7 +398,7 @@ public class MappingCouchbaseConverter extends AbstractCouchbaseConverter
           return;
         }
 
-        Object propertyObj = wrapper.getProperty(prop, prop.getType());
+        Object propertyObj = accessor.getProperty(prop, prop.getType());
         if (null != propertyObj) {
           if (!conversions.isSimpleType(propertyObj.getClass())) {
             writePropertyInternal(propertyObj, target, prop);
@@ -414,7 +414,7 @@ public class MappingCouchbaseConverter extends AbstractCouchbaseConverter
       public void doWithAssociation(final Association<CouchbasePersistentProperty> association) {
         CouchbasePersistentProperty inverseProp = association.getInverse();
         Class<?> type = inverseProp.getType();
-        Object propertyObj = wrapper.getProperty(inverseProp, type);
+        Object propertyObj = accessor.getProperty(inverseProp, type);
         if (null != propertyObj) {
           writePropertyInternal(propertyObj, target, inverseProp);
         }
@@ -691,6 +691,14 @@ public class MappingCouchbaseConverter extends AbstractCouchbaseConverter
     } else {
       return (R) getPotentiallyConvertedSimpleRead(value, rawType);
     }
+  }
+  
+  private ConvertingPropertyAccessor getPropertyAccessor(Object source) {
+  	
+  	CouchbasePersistentEntity<?> entity = mappingContext.getPersistentEntity(source.getClass());
+  	PersistentPropertyAccessor accessor = entity.getPropertyAccessor(source);
+  	
+  	return new ConvertingPropertyAccessor(accessor, conversionService);
   }
 
   /**
